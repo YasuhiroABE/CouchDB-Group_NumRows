@@ -190,6 +190,7 @@
     skip = 0,
 
     group_level = 0,
+    group_numrows = false,
 
     view_type = nil,
     include_docs = false,
