@@ -190,7 +190,6 @@
     skip = 0,
 
     group_level = 0,
-    group_numrows = false,
 
     view_type = nil,
     include_docs = false,
@@ -265,13 +264,7 @@
     body = nil,
     options = [
         {response_format,binary},
-        {inactivity_timeout, 30000},
-        {max_sessions, list_to_integer(
-            couch_config:get("replicator", "max_http_sessions", "10")
-        )},
-        {max_pipeline_size, list_to_integer(
-            couch_config:get("replicator", "max_http_pipeline_size", "10")
-        )}
+        {inactivity_timeout, 30000}
     ],
     retries = 10,
     pause = 500,
