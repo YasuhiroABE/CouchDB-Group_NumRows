@@ -61,7 +61,7 @@ Otherwise, replace the *.beam* with the *.erl* as an instant way.
 
 Examples
 --------
-As an example, we have the postal database which has some views like the following.
+As an example, the "example" database has four document and defines the "all" view.
 
     $ curl 'http://localhost:5984/example/_design/all/_view/all?group=true'
 
@@ -77,6 +77,7 @@ The result is;
 To send the same request with the "group\_numrows";
 
     $curl 'http://localhost:5984/example/_design/all/_view/all?group=true&group_numrows=true'
+    
     {"group_numrows":"4"}
 
 Implementation Detail
