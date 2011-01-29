@@ -14,6 +14,10 @@ The behavior of the "group\_numrows" is similar to the "SELECT COUNT(DISTINCT co
 However, if you get the total number without it, you have to need much more memory and cpu resources.
 It might be a problem if the set is quite large.
 
+The "group_numrows" query option for CouchDB 1.0.2
+--------------------------------------------------
+Please refer the explanation for CouchDB 1.0.1.
+
 The "group_numrows" query option for CouchDB 1.0.1
 --------------------------------------------------
 
