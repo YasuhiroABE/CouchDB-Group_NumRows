@@ -155,15 +155,22 @@ output_reduce_view(Req, Db, View, Group, QueryArgs, nil) ->
         group_level = GroupLevel
     } = QueryArgs,
     CurrentEtag = view_group_etag(Group, Db),
+    Pid = case get_group_numrows_type(Req) of 
+            true -> spawn_link(fun() -> group_numrows_server() end);
+              _  -> false
+          end,
     couch_httpd:etag_respond(Req, CurrentEtag, fun() ->
         {ok, GroupRowsFun, RespFun} = make_reduce_fold_funs(Req, GroupLevel,
                 QueryArgs, CurrentEtag, Group#group.current_seq,
-                #reduce_fold_helper_funs{}),
+                #reduce_fold_helper_funs{}, Pid),
         FoldAccInit = {Limit, Skip, undefined, []},
         {ok, {_, _, Resp, _}} = couch_view:fold_reduce(View,
                 RespFun, FoldAccInit, [{key_group_fun, GroupRowsFun} |
                 make_key_options(QueryArgs)]),
-        finish_reduce_fold(Req, Resp)
+        case get_group_numrows_type(Req) of
+          true -> finish_reduce_fold(Req, Resp, [], Pid);
+             _ -> finish_reduce_fold(Req, Resp)
+        end
     end);
 
 output_reduce_view(Req, Db, View, Group, QueryArgs, Keys) ->
@@ -173,10 +180,14 @@ output_reduce_view(Req, Db, View, Group, QueryArgs, Keys) ->
         group_level = GroupLevel
     } = QueryArgs,
     CurrentEtag = view_group_etag(Group, Db, Keys),
+    Pid = case get_group_numrows_type(Req) of 
+            true -> spawn_link(fun() -> group_numrows_server() end);
+              _  -> false
+          end,
     couch_httpd:etag_respond(Req, CurrentEtag, fun() ->
         {ok, GroupRowsFun, RespFun} = make_reduce_fold_funs(Req, GroupLevel,
                 QueryArgs, CurrentEtag, Group#group.current_seq,
-                #reduce_fold_helper_funs{}),
+                #reduce_fold_helper_funs{}, Pid),
         {Resp, _RedAcc3} = lists:foldl(
             fun(Key, {Resp, RedAcc}) ->
                 % run the reduce once for each key in keys, with limit etc
@@ -190,7 +201,10 @@ output_reduce_view(Req, Db, View, Group, QueryArgs, Keys) ->
                 {Resp2, RedAcc2}
             end,
         {undefined, []}, Keys), % Start with no comma
-        finish_reduce_fold(Req, Resp, [{update_seq,Group#group.current_seq}])
+        case get_group_numrows_type(Req) of
+          true -> finish_reduce_fold(Req, Resp, [{update_seq,Group#group.current_seq}], Pid);
+             _ -> finish_reduce_fold(Req, Resp, [{update_seq,Group#group.current_seq}])
+          end
     end).
 
 reverse_key_default(?MIN_STR) -> ?MAX_STR;
@@ -202,6 +216,9 @@ get_stale_type(Req) ->
 
 get_reduce_type(Req) ->
     list_to_existing_atom(couch_httpd:qs_value(Req, "reduce", "true")).
+
+get_group_numrows_type(Req) ->
+    list_to_existing_atom(couch_httpd:qs_value(Req, "group_numrows", "false")).
 
 load_view(Req, Db, {ViewDesignId, ViewName}, Keys) ->
     Stale = get_stale_type(Req),
@@ -303,6 +320,8 @@ parse_view_param("reduce", Value) ->
     [{reduce, parse_bool_param(Value)}];
 parse_view_param("include_docs", Value) ->
     [{include_docs, parse_bool_param(Value)}];
+parse_view_param("group_numrows", Value) ->
+    [{group_numrows, parse_bool_param(Value)}];
 parse_view_param("list", Value) ->
     [{list, ?l2b(Value)}];
 parse_view_param("callback", _) ->
@@ -387,6 +406,8 @@ validate_view_query(include_docs, true, Args) ->
 % Use the view_query_args record's default value
 validate_view_query(include_docs, _Value, Args) ->
     Args;
+validate_view_query(group_numrows, _Value, Args) ->
+    Args;
 validate_view_query(extra, _Value, Args) ->
     Args.
 
@@ -395,7 +416,7 @@ make_view_fold_fun(Req, QueryArgs, Etag, Db, UpdateSeq, TotalViewCount, HelperFu
         start_response = StartRespFun,
         send_row = SendRowFun,
         reduce_count = ReduceCountFun
-    } = apply_default_helper_funs(HelperFuns),
+    } = apply_default_helper_funs(HelperFuns, Req, Req),
 
     #view_query_args{
         include_docs = IncludeDocs
@@ -427,10 +448,13 @@ make_view_fold_fun(Req, QueryArgs, Etag, Db, UpdateSeq, TotalViewCount, HelperFu
     end.
 
 make_reduce_fold_funs(Req, GroupLevel, _QueryArgs, Etag, UpdateSeq, HelperFuns) ->
+  make_reduce_fold_funs(Req, GroupLevel, _QueryArgs, Etag, UpdateSeq, HelperFuns, nil).
+
+make_reduce_fold_funs(Req, GroupLevel, _QueryArgs, Etag, UpdateSeq, HelperFuns, Pid) ->
     #reduce_fold_helper_funs{
         start_response = StartRespFun,
         send_row = SendRowFun
-    } = apply_default_helper_funs(HelperFuns),
+    } = apply_default_helper_funs(HelperFuns, Req, Pid),
 
     GroupRowsFun =
         fun({_Key1,_}, {_Key2,_}) when GroupLevel == 0 ->
@@ -490,7 +514,7 @@ apply_default_helper_funs(
         #view_fold_helper_funs{
             start_response = StartResp,
             send_row = SendRow
-        }=Helpers) ->
+        }=Helpers, _Req, _Pid) ->
     StartResp2 = case StartResp of
     undefined -> fun json_view_start_resp/6;
     _ -> StartResp
@@ -506,19 +530,21 @@ apply_default_helper_funs(
         send_row = SendRow2
     };
 
-
 apply_default_helper_funs(
         #reduce_fold_helper_funs{
             start_response = StartResp,
             send_row = SendRow
-        }=Helpers) ->
+        }=Helpers, Req, Pid) ->
     StartResp2 = case StartResp of
     undefined -> fun json_reduce_start_resp/4;
     _ -> StartResp
     end,
 
     SendRow2 = case SendRow of
-    undefined -> fun send_json_reduce_row/3;
+    undefined -> case get_group_numrows_type(Req) of
+                   true -> gen_send_json_reduce_row(Pid);
+                      _ -> fun send_json_reduce_row/3
+                 end;
     _ -> SendRow
     end,
 
@@ -588,6 +614,24 @@ send_json_reduce_row(Resp, {Key, Value}, RowFront) ->
     send_chunk(Resp, RowFront ++ ?JSON_ENCODE({[{key, Key}, {value, Value}]})),
     {ok, ",\r\n"}.
 
+gen_send_json_reduce_row(Pid) ->
+  fun(_Req, _KV, _RowFront) ->
+    Pid ! {countup},
+    {ok, ",\r\n"}
+  end.
+
+group_numrows_server() ->
+  group_numrows_server(0).
+group_numrows_server(X) ->
+  receive
+    {status, From} ->
+      From ! X, group_numrows_server(X);
+    {countup} ->
+      group_numrows_server(X+1);
+    {stop, From} ->
+      From ! X, exit(normal)
+  end.
+
 view_group_etag(Group, Db) ->
     view_group_etag(Group, Db, nil).
 
@@ -653,6 +697,26 @@ finish_view_fold(Req, TotalRows, Offset, FoldResult, Fields) ->
 finish_reduce_fold(Req, Resp) ->
     finish_reduce_fold(Req, Resp, []).
 
+get_group_numrows_final_result(Pid) ->
+  Pid ! {stop, self()},
+  receive
+    X -> X
+  after 80000 ->
+    0
+  end.
+
+finish_reduce_fold(Req, Resp, Fields, Pid) ->
+    case Resp of
+    undefined ->
+        send_json(Req, 200, {[
+            {group_numrows, 0}
+        ] ++ Fields});
+    Resp ->
+        X = get_group_numrows_final_result(Pid),
+        send_chunk(Resp, "{\"group_numrows\":\"" ++ integer_to_list(X) ++ "\"}"),
+        end_json_response(Resp)
+    end.
+ 
 finish_reduce_fold(Req, Resp, Fields) ->
     case Resp of
     undefined ->
