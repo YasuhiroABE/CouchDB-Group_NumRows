@@ -2,16 +2,15 @@
 
 README
 ======
-The CouchDB HTTP View API defines many query options.
+The "group\_numrows" is a query option of the CouchDB HTTP View API.
+It provides a functionality like the "SELECT COUNT(DISTINCT column)" query of SQL.
 
-The group query option provides a set of distinct keys in the  specified view.
-This is similar to the "SELECT DISTINCT(column)" query of SQL.
+The group query option provides a set of distinct keys in the specified view.
+This is similar to the "SELECT DISTINCT(column)" query.
 
 The "group\_numrows" option works with the "group" option, and provides the total number of distinct keys.
 
-The behavior of the "group\_numrows" is similar to the "SELECT COUNT(DISTINCT column)" query.
-
-However, if you get the total number without it, you have to need much more memory and cpu resources.
+If you get the total number without it, however, you have to need the set of all distinct keys into memory.
 It might be a problem if the set is quite large.
 
 The "group_numrows" query option for CouchDB 1.0.2
