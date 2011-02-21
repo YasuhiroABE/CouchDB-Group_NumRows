@@ -23,8 +23,12 @@ We assumes that you just need to know the total number of keys to display the nu
 In this case, the "group\_numrows=true" query returns the total number of keys.
 The total number of keys equals to the total number of lines in above example.
 
+    {"group_numrows":"12345678"}
+
 If you get the total number without "group\_numrows", you will have to need the result set on the memory.
 It might be a problem if the set is quite large.
+
+    results["rows"].length
 
 For instance, there are almost 100K result lines (almost 3MB json string) in my linux box.
 The group\_numrows=true operation is 8.5 times faster than the length method of ruby Hash object.
