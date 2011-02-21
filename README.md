@@ -112,8 +112,8 @@ The "total\_rows" of the \_all\_docs always returns the total rows, so it is the
 Appendix
 --------
 
-* [English - Blog; CouchDB: Implementation of SELECT COUNT(DISTINCT field)...](http://yasu-2.blogspot.com/2010/12/couchdb-implementation-of-select.html "CouchDB: Implementation of SELECT COUNT(DISTINCT field)")
-* [Japanese - Blog; CouchDBでSELECT COUNT(DISTINCT ...)をするために必要なこと](http://yasu-2.blogspot.com/2010/12/couchdbselect-countdistinct.html "CouchDBでSELECT COUNT(DISTINCT ...)をするために必要なこと")
+* English [CouchDB: Implementation of SELECT COUNT\(DISTINCT field\)...](http://yasu-2.blogspot.com/2010/12/couchdb-implementation-of-select.html "CouchDB: Implementation of SELECT COUNT\(DISTINCT field\)")
+* Japanese [CouchDBでSELECT COUNT\(DISTINCT ...\)をするために必要なこと](http://yasu-2.blogspot.com/2010/12/couchdbselect-countdistinct.html "CouchDBでSELECT COUNT\(DISTINCT ...\)をするために必要なこと")
 
 License
 -------
