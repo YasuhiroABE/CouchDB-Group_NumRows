@@ -10,8 +10,24 @@ This is similar to the "SELECT DISTINCT(column)" query.
 
 The "group\_numrows" option works with the "group" option, and provides the total number of distinct keys.
 
-If you get the total number without it, however, you have to need the set of all distinct keys into memory.
+### With a Example
+When you got results by the group=true query like followings;
+
+  {"key":"A","value":xxxx}
+  {"key":"B","value":xxxx}
+  ... skip ...
+  {"key":"ZZZZZZZZZZ","value":xxxx}
+
+We assumes that you just need to know the total number of keys to display the number of results.
+
+In this case, the "group\_numrows=true" query returns the total number of keys.
+The total number of keys equals to the total number of lines in above example.
+
+If you get the total number without "group\_numrows", you will have to need the result set on the memory.
 It might be a problem if the set is quite large.
+
+For instance, there are almost 100K result lines (almost 3MB json string) in my linux box.
+The group\_numrows=true operation is 8.5 times faster than the length method of ruby Hash object.
 
 The "group_numrows" query option for CouchDB 1.0.2
 --------------------------------------------------
