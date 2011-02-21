@@ -13,10 +13,10 @@ The "group\_numrows" option works with the "group" option, and provides the tota
 ### With a Example
 When you got results by the group=true query like followings;
 
-  {"key":"A","value":xxxx}
-  {"key":"B","value":xxxx}
-  ... skip ...
-  {"key":"ZZZZZZZZZZ","value":xxxx}
+    {"key":"A","value":xxxx}
+    {"key":"B","value":xxxx}
+    ... skip ...
+    {"key":"ZZZZZZZZZZ","value":xxxx}
 
 We assumes that you just need to know the total number of keys to display the number of results.
 
