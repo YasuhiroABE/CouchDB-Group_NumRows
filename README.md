@@ -2,36 +2,49 @@
 
 README
 ======
-The "group\_numrows" is a query option of the CouchDB HTTP View API.
+The "group\_numrows" is new query option for the CouchDB HTTP View API.
 It provides a functionality like the "SELECT COUNT(DISTINCT column)" query of SQL.
 
-The group query option provides a set of distinct keys in the specified view.
+The "group=true" query option provides a set of distinct keys in the specified view.
 This is similar to the "SELECT DISTINCT(column)" query.
 
-The "group\_numrows" option works with the "group" option, and provides the total number of distinct keys.
+The "group\_numrows" works with the "group=true" query option,
+and provides the total number of distinct keys.
 
 ### With a Example
-When you got results by the group=true query like followings;
+The number of unique group keys will be calculated like the following;
 
-    {"key":"A","value":xxxx}
-    {"key":"B","value":xxxx}
-    ... skip ...
-    {"key":"ZZZZZZZZZZ","value":xxxx}
+          query with "group=true"                [Ruby] temporary object
+    +-----------------------------------+       +------------------------+		   
+    | {"key":"A","value":xxxx}          |  ---> | results["rows"].length |  ---> 12345
+    | {"key":"B","value":xxxx}          |       +------------------------+
+    | ... skip ...                      |
+    | {"key":"ZZZZZZZZZZ","value":xxxx} |
+    +-----------------------------------+
 
-We assumes that you just need to know the total number of keys to display the number of results.
+    ## pseudo code in ruby
+    json = couch.get("/example/_design/test/_view/test?group=true")
+    h = JSON.parse(json)
+    total_numrows = h["rows"].length
 
-In this case, the "group\_numrows=true" query returns the total number of keys.
-The total number of keys equals to the total number of lines in above example.
 
-    {"group_numrows":"12345678"}
+In this case, the "results" hash object has to store all results temporarily.
+It might be a problem if the number of results is quite large.
 
-If you get the total number without "group\_numrows", you will have to need the result set on the memory.
-It might be a problem if the set is quite large.
+The "group\_numrows=true" query returns only the number of unique keys.
 
-    results["rows"].length
+    query with "group_numrows=true&group=true"
+    +--------------------------+
+    | {"group_numrows":12345}  |
+    +--------------------------+
+
+    ## pseudo code in ruby
+    json = couch.get("/example/_design/test/_view/test?group=true&group_numrows=true")
+    h = JSON.parse(json)
+    total_numrows = h["group_numrows"]
 
 For instance, there are almost 100K result lines (almost 3MB json string) in my linux box.
-The group\_numrows=true operation is 8.5 times faster than the length method of ruby Hash object.
+The group\_numrows=true operation is 8.5 times faster than calculating the length of a hash object.
 
 The "group_numrows" query option for CouchDB 1.0.2
 --------------------------------------------------
@@ -39,29 +52,6 @@ Please refer the explanation for CouchDB 1.0.1.
 
 The "group_numrows" query option for CouchDB 1.0.1
 --------------------------------------------------
-
-### Overview
-
-The following pseudo code shows an example of the "group\_numrows";
-
-    ## pseudo code in ruby
-    json = couch.get("/example/_design/test/_view/test?group=true&group_numrows=true")
-    h = JSON.parse(json)
-    total_numrows = h["group_numrows"]
-
-In above code, the "json" is single string expression, '{"group\_numrows":102}'.
-
-#### without "group\_numrows"
-If you want to get the total number of distinct keys without the "group\_numrows" option.
-
-You have to get the set of distinct keys, convert to the Hash object or something, and finally call the length or size method like in the following way.
-
-    ## pseudo code in ruby
-    json = couch.get("/example/_design/test/_view/test?group=true")
-    h = JSON.parse(json)
-    total_numrows = h["rows"].length
-
-The processing time is dependent on the memory consumption of the json string at the both server and client sides.
 
 Installation
 ------------
