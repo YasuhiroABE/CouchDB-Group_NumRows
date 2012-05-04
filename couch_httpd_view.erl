@@ -15,10 +15,10 @@
 
 -export([handle_view_req/3,handle_temp_view_req/2]).
 
--export([get_stale_type/1, get_reduce_type/1, parse_view_params/3]).
--export([make_view_fold_fun/7, finish_view_fold/4, finish_view_fold/5, view_row_obj/3]).
--export([view_group_etag/2, view_group_etag/3, make_reduce_fold_funs/6]).
--export([design_doc_view/5, parse_bool_param/1, doc_member/2]).
+-export([parse_view_params/4]).
+-export([make_view_fold_fun/7, finish_view_fold/4, finish_view_fold/5, view_row_obj/4]).
+-export([view_etag/5, make_reduce_fold_funs/6]).
+-export([design_doc_view/5, parse_bool_param/1, doc_member/3]).
 -export([make_key_options/1, load_view/4]).
 
 -import(couch_httpd,
@@ -34,18 +34,19 @@ design_doc_view(Req, Db, DName, ViewName, Keys) ->
     Reduce = get_reduce_type(Req),
     Result = case couch_view:get_map_view(Db, DesignId, ViewName, Stale) of
     {ok, View, Group} ->
-        QueryArgs = parse_view_params(Req, Keys, map),
+        QueryArgs = parse_view_params(Req, Keys, map, view_collator(View)),
         output_map_view(Req, View, Group, Db, QueryArgs, Keys);
     {not_found, Reason} ->
         case couch_view:get_reduce_view(Db, DesignId, ViewName, Stale) of
         {ok, ReduceView, Group} ->
+            Collator = view_collator(ReduceView),
             case Reduce of
             false ->
-                QueryArgs = parse_view_params(Req, Keys, red_map),
+                QueryArgs = parse_view_params(Req, Keys, red_map, Collator),
                 MapView = couch_view:extract_map_view(ReduceView),
                 output_map_view(Req, MapView, Group, Db, QueryArgs, Keys);
             _ ->
-                QueryArgs = parse_view_params(Req, Keys, reduce),
+                QueryArgs = parse_view_params(Req, Keys, reduce, Collator),
                 output_reduce_view(Req, Db, ReduceView, Group, QueryArgs, Keys)
             end;
         _ ->
@@ -57,7 +58,8 @@ design_doc_view(Req, Db, DName, ViewName, Keys) ->
 
 handle_view_req(#httpd{method='GET',
         path_parts=[_, _, DName, _, ViewName]}=Req, Db, _DDoc) ->
-    design_doc_view(Req, Db, DName, ViewName, nil);
+    Keys = couch_httpd:qs_json_value(Req, "keys", nil),
+    design_doc_view(Req, Db, DName, ViewName, Keys);
 
 handle_view_req(#httpd{method='POST',
         path_parts=[_, _, DName, _, ViewName]}=Req, Db, _DDoc) ->
@@ -89,19 +91,19 @@ handle_temp_view_req(#httpd{method='POST'}=Req, Db) ->
     Reduce = get_reduce_type(Req),
     case couch_util:get_value(<<"reduce">>, Props, null) of
     null ->
-        QueryArgs = parse_view_params(Req, Keys, map),
         {ok, View, Group} = couch_view:get_temp_map_view(Db, Language,
             DesignOptions, MapSrc),
+        QueryArgs = parse_view_params(Req, Keys, map, view_collator(View)),
         output_map_view(Req, View, Group, Db, QueryArgs, Keys);
     _ when Reduce =:= false ->
-        QueryArgs = parse_view_params(Req, Keys, red_map),
         {ok, View, Group} = couch_view:get_temp_map_view(Db, Language,
             DesignOptions, MapSrc),
+        QueryArgs = parse_view_params(Req, Keys, red_map, view_collator(View)),
         output_map_view(Req, View, Group, Db, QueryArgs, Keys);
     RedSrc ->
-        QueryArgs = parse_view_params(Req, Keys, reduce),
         {ok, View, Group} = couch_view:get_temp_reduce_view(Db, Language,
             DesignOptions, MapSrc, RedSrc),
+        QueryArgs = parse_view_params(Req, Keys, reduce, view_collator(View)),
         output_reduce_view(Req, Db, View, Group, QueryArgs, Keys)
     end;
 
@@ -113,7 +115,7 @@ output_map_view(Req, View, Group, Db, QueryArgs, nil) ->
         limit = Limit,
         skip = SkipCount
     } = QueryArgs,
-    CurrentEtag = view_group_etag(Group, Db),
+    CurrentEtag = view_etag(Db, Group, View, QueryArgs),
     couch_httpd:etag_respond(Req, CurrentEtag, fun() ->
         {ok, RowCount} = couch_view:get_row_count(View),
         FoldlFun = make_view_fold_fun(Req, QueryArgs, CurrentEtag, Db, Group#group.current_seq, RowCount, #view_fold_helper_funs{reduce_count=fun couch_view:reduce_to_count/1}),
@@ -129,7 +131,7 @@ output_map_view(Req, View, Group, Db, QueryArgs, Keys) ->
         limit = Limit,
         skip = SkipCount
     } = QueryArgs,
-    CurrentEtag = view_group_etag(Group, Db, Keys),
+    CurrentEtag = view_etag(Db, Group, View, QueryArgs, Keys),
     couch_httpd:etag_respond(Req, CurrentEtag, fun() ->
         {ok, RowCount} = couch_view:get_row_count(View),
         FoldAccInit = {Limit, SkipCount, undefined, []},
@@ -154,11 +156,11 @@ output_reduce_view(Req, Db, View, Group, QueryArgs, nil) ->
         skip = Skip,
         group_level = GroupLevel
     } = QueryArgs,
-    CurrentEtag = view_group_etag(Group, Db),
+    CurrentEtag = view_etag(Db, Group, View, QueryArgs),
     Pid = case get_group_numrows_type(Req) of 
             true -> spawn_link(fun() -> group_numrows_server() end);
               _  -> false
-          end,
+    end,
     couch_httpd:etag_respond(Req, CurrentEtag, fun() ->
         {ok, GroupRowsFun, RespFun} = make_reduce_fold_funs(Req, GroupLevel,
                 QueryArgs, CurrentEtag, Group#group.current_seq,
@@ -168,8 +170,8 @@ output_reduce_view(Req, Db, View, Group, QueryArgs, nil) ->
                 RespFun, FoldAccInit, [{key_group_fun, GroupRowsFun} |
                 make_key_options(QueryArgs)]),
         case get_group_numrows_type(Req) of
-          true -> finish_reduce_fold(Req, Resp, [], Pid);
-             _ -> finish_reduce_fold(Req, Resp)
+	    true -> finish_reduce_fold(Req, Resp, [], Pid);
+	    _ -> finish_reduce_fold(Req, Resp)
         end
     end);
 
@@ -179,9 +181,9 @@ output_reduce_view(Req, Db, View, Group, QueryArgs, Keys) ->
         skip = Skip,
         group_level = GroupLevel
     } = QueryArgs,
-    CurrentEtag = view_group_etag(Group, Db, Keys),
+    CurrentEtag = view_etag(Db, Group, View, QueryArgs, Keys),
     Pid = case get_group_numrows_type(Req) of 
-            true -> spawn_link(fun() -> group_numrows_server() end);
+	      true -> spawn_link(fun() -> group_numrows_server() end);
               _  -> false
           end,
     couch_httpd:etag_respond(Req, CurrentEtag, fun() ->
@@ -202,9 +204,9 @@ output_reduce_view(Req, Db, View, Group, QueryArgs, Keys) ->
             end,
         {undefined, []}, Keys), % Start with no comma
         case get_group_numrows_type(Req) of
-          true -> finish_reduce_fold(Req, Resp, [{update_seq,Group#group.current_seq}], Pid);
-             _ -> finish_reduce_fold(Req, Resp, [{update_seq,Group#group.current_seq}])
-          end
+	    true -> finish_reduce_fold(Req, Resp, [{update_seq,Group#group.current_seq}], Pid);
+	    _ -> finish_reduce_fold(Req, Resp, [{update_seq,Group#group.current_seq}])
+	end
     end).
 
 reverse_key_default(?MIN_STR) -> ?MAX_STR;
@@ -225,18 +227,19 @@ load_view(Req, Db, {ViewDesignId, ViewName}, Keys) ->
     Reduce = get_reduce_type(Req),
     case couch_view:get_map_view(Db, ViewDesignId, ViewName, Stale) of
     {ok, View, Group} ->
-        QueryArgs = parse_view_params(Req, Keys, map),
+        QueryArgs = parse_view_params(Req, Keys, map, view_collator(View)),
         {map, View, Group, QueryArgs};
     {not_found, _Reason} ->
         case couch_view:get_reduce_view(Db, ViewDesignId, ViewName, Stale) of
         {ok, ReduceView, Group} ->
+            Collator = view_collator(ReduceView),
             case Reduce of
             false ->
-                QueryArgs = parse_view_params(Req, Keys, map_red),
+                QueryArgs = parse_view_params(Req, Keys, map_red, Collator),
                 MapView = couch_view:extract_map_view(ReduceView),
                 {map, MapView, Group, QueryArgs};
             _ ->
-                QueryArgs = parse_view_params(Req, Keys, reduce),
+                QueryArgs = parse_view_params(Req, Keys, reduce, Collator),
                 {reduce, ReduceView, Group, QueryArgs}
             end;
         {not_found, Reason} ->
@@ -244,12 +247,30 @@ load_view(Req, Db, {ViewDesignId, ViewName}, Keys) ->
         end
     end.
 
+view_collator({reduce, _N, _Lang, View}) ->
+    view_collator(View);
+
+view_collator({temp_reduce, View}) ->
+    view_collator(View);
+
+view_collator(#view{btree=Btree}) ->
+    % Return an "is-less-than" predicate by calling into the btree's
+    % collator. For raw collation, couch_btree compares arbitrary
+    % Erlang terms, but for normal (ICU) collation, it expects
+    % {Json, Id} tuples.
+    fun
+        ({_JsonA, _IdA}=A, {_JsonB, _IdB}=B) ->
+            couch_btree:less(Btree, A, B);
+        (JsonA, JsonB) ->
+            couch_btree:less(Btree, {JsonA, null}, {JsonB, null})
+    end.
+
 % query_parse_error could be removed
 % we wouldn't need to pass the view type, it'd just parse params.
 % I'm not sure what to do about the error handling, but
 % it might simplify things to have a parse_view_params function
 % that doesn't throw().
-parse_view_params(Req, Keys, ViewType) ->
+parse_view_params(Req, Keys, ViewType, LessThan) ->
     QueryList = couch_httpd:qs(Req),
     QueryParams =
     lists:foldl(fun({K, V}, Acc) ->
@@ -263,7 +284,7 @@ parse_view_params(Req, Keys, ViewType) ->
     QueryArgs = lists:foldl(fun({K, V}, Args2) ->
         validate_view_query(K, V, Args2)
     end, Args, lists:reverse(QueryParams)), % Reverse to match QS order.
-
+    warn_on_empty_key_range(QueryArgs, LessThan),
     GroupLevel = QueryArgs#view_query_args.group_level,
     case {ViewType, GroupLevel, IsMultiGet} of
     {reduce, exact, true} ->
@@ -285,13 +306,25 @@ parse_view_param("", _) ->
 parse_view_param("key", Value) ->
     JsonKey = ?JSON_DECODE(Value),
     [{start_key, JsonKey}, {end_key, JsonKey}];
+% TODO: maybe deprecate startkey_docid
 parse_view_param("startkey_docid", Value) ->
     [{start_docid, ?l2b(Value)}];
+parse_view_param("start_key_doc_id", Value) ->
+    [{start_docid, ?l2b(Value)}];
+% TODO: maybe deprecate endkey_docid
 parse_view_param("endkey_docid", Value) ->
     [{end_docid, ?l2b(Value)}];
+parse_view_param("end_key_doc_id", Value) ->
+    [{end_docid, ?l2b(Value)}];
+% TODO: maybe deprecate startkey
 parse_view_param("startkey", Value) ->
     [{start_key, ?JSON_DECODE(Value)}];
+parse_view_param("start_key", Value) ->
+    [{start_key, ?JSON_DECODE(Value)}];
+% TODO: maybe deprecate endkey
 parse_view_param("endkey", Value) ->
+    [{end_key, ?JSON_DECODE(Value)}];
+parse_view_param("end_key", Value) ->
     [{end_key, ?JSON_DECODE(Value)}];
 parse_view_param("limit", Value) ->
     [{limit, parse_positive_int_param(Value)}];
@@ -299,8 +332,11 @@ parse_view_param("count", _Value) ->
     throw({query_parse_error, <<"Query parameter 'count' is now 'limit'.">>});
 parse_view_param("stale", "ok") ->
     [{stale, ok}];
+parse_view_param("stale", "update_after") ->
+    [{stale, update_after}];
 parse_view_param("stale", _Value) ->
-    throw({query_parse_error, <<"stale only available as stale=ok">>});
+    throw({query_parse_error,
+            <<"stale only available as stale=ok or as stale=update_after">>});
 parse_view_param("update", _Value) ->
     throw({query_parse_error, <<"update=false is now stale=ok">>});
 parse_view_param("descending", Value) ->
@@ -322,12 +358,34 @@ parse_view_param("include_docs", Value) ->
     [{include_docs, parse_bool_param(Value)}];
 parse_view_param("group_numrows", Value) ->
     [{group_numrows, parse_bool_param(Value)}];
+parse_view_param("conflicts", Value) ->
+    [{conflicts, parse_bool_param(Value)}];
 parse_view_param("list", Value) ->
     [{list, ?l2b(Value)}];
 parse_view_param("callback", _) ->
     []; % Verified in the JSON response functions
 parse_view_param(Key, Value) ->
     [{extra, {Key, Value}}].
+
+warn_on_empty_key_range(#view_query_args{start_key=undefined}, _Lt) ->
+    ok;
+warn_on_empty_key_range(#view_query_args{end_key=undefined}, _Lt) ->
+    ok;
+warn_on_empty_key_range(#view_query_args{start_key=A, end_key=A}, _Lt) ->
+    ok;
+warn_on_empty_key_range(#view_query_args{
+    start_key=StartKey, end_key=EndKey, direction=Dir}, LessThan) ->
+    case {Dir, LessThan(StartKey, EndKey)} of
+        {fwd, false} ->
+            throw({query_parse_error,
+            <<"No rows can match your key range, reverse your ",
+                "start_key and end_key or set descending=true">>});
+        {rev, true} ->
+            throw({query_parse_error,
+            <<"No rows can match your key range, reverse your ",
+                "start_key and end_key or set descending=false">>});
+        _ -> ok
+    end.
 
 validate_view_query(start_key, Value, Args) ->
     case Args#view_query_args.multi_get of
@@ -355,6 +413,10 @@ validate_view_query(limit, Value, Args) ->
     Args#view_query_args{limit=Value};
 validate_view_query(list, Value, Args) ->
     Args#view_query_args{list=Value};
+validate_view_query(stale, ok, Args) ->
+    Args#view_query_args{stale=ok};
+validate_view_query(stale, update_after, Args) ->
+    Args#view_query_args{stale=update_after};
 validate_view_query(stale, _, Args) ->
     Args;
 validate_view_query(descending, true, Args) ->
@@ -408,6 +470,15 @@ validate_view_query(include_docs, _Value, Args) ->
     Args;
 validate_view_query(group_numrows, _Value, Args) ->
     Args;
+validate_view_query(conflicts, true, Args) ->
+    case Args#view_query_args.view_type of
+    reduce ->
+        Msg = <<"Query parameter `conflicts` "
+                "is invalid for reduce views.">>,
+        throw({query_parse_error, Msg});
+    _ ->
+        Args#view_query_args{conflicts = true}
+    end;
 validate_view_query(extra, _Value, Args) ->
     Args.
 
@@ -419,7 +490,8 @@ make_view_fold_fun(Req, QueryArgs, Etag, Db, UpdateSeq, TotalViewCount, HelperFu
     } = apply_default_helper_funs(HelperFuns, Req, Req),
 
     #view_query_args{
-        include_docs = IncludeDocs
+        include_docs = IncludeDocs,
+        conflicts = Conflicts
     } = QueryArgs,
     
     fun({{Key, DocId}, Value}, OffsetReds,
@@ -437,12 +509,12 @@ make_view_fold_fun(Req, QueryArgs, Etag, Db, UpdateSeq, TotalViewCount, HelperFu
             {ok, Resp2, RowFunAcc0} = StartRespFun(Req, Etag,
                 TotalViewCount, Offset, RowFunAcc, UpdateSeq),
             {Go, RowFunAcc2} = SendRowFun(Resp2, Db, {{Key, DocId}, Value},
-                IncludeDocs, RowFunAcc0),
+                IncludeDocs, Conflicts, RowFunAcc0),
             {Go, {AccLimit - 1, 0, Resp2, RowFunAcc2}};
         {AccLimit, _, Resp} when (AccLimit > 0) ->
             % rendering all other rows
             {Go, RowFunAcc2} = SendRowFun(Resp, Db, {{Key, DocId}, Value},
-                IncludeDocs, RowFunAcc),
+                IncludeDocs, Conflicts, RowFunAcc),
             {Go, {AccLimit - 1, 0, Resp, RowFunAcc2}}
         end
     end.
@@ -521,7 +593,7 @@ apply_default_helper_funs(
     end,
 
     SendRow2 = case SendRow of
-    undefined -> fun send_json_view_row/5;
+    undefined -> fun send_json_view_row/6;
     _ -> SendRow
     end,
 
@@ -529,6 +601,7 @@ apply_default_helper_funs(
         start_response = StartResp2,
         send_row = SendRow2
     };
+
 
 apply_default_helper_funs(
         #reduce_fold_helper_funs{
@@ -582,7 +655,7 @@ make_end_key_option(
     [{end_key_gt, {EndKey,reverse_key_default(EndDocId)}}].
 
 json_view_start_resp(Req, Etag, TotalViewCount, Offset, _Acc, UpdateSeq) ->
-    {ok, Resp} = start_json_response(Req, 200, [{"Etag", Etag}]),
+    {ok, Resp} = start_json_response(Req, 200, [{"ETag", Etag}]),
     BeginBody = case couch_httpd:qs_value(Req, "update_seq") of
     "true" ->
         io_lib:format(
@@ -596,13 +669,13 @@ json_view_start_resp(Req, Etag, TotalViewCount, Offset, _Acc, UpdateSeq) ->
     end,
     {ok, Resp, BeginBody}.
 
-send_json_view_row(Resp, Db, {{Key, DocId}, Value}, IncludeDocs, RowFront) ->
-    JsonObj = view_row_obj(Db, {{Key, DocId}, Value}, IncludeDocs),
+send_json_view_row(Resp, Db, Kv, IncludeDocs, Conflicts, RowFront) ->
+    JsonObj = view_row_obj(Db, Kv, IncludeDocs, Conflicts),
     send_chunk(Resp, RowFront ++  ?JSON_ENCODE(JsonObj)),
     {ok, ",\r\n"}.
 
 json_reduce_start_resp(Req, Etag, _Acc0, UpdateSeq) ->
-    {ok, Resp} = start_json_response(Req, 200, [{"Etag", Etag}]),
+    {ok, Resp} = start_json_response(Req, 200, [{"ETag", Etag}]),
     case couch_httpd:qs_value(Req, "update_seq") of
     "true" ->
         {ok, Resp, io_lib:format("{\"update_seq\":~w,\"rows\":[\r\n",[UpdateSeq])};
@@ -632,22 +705,23 @@ group_numrows_server(X) ->
       From ! X, exit(normal)
   end.
 
-view_group_etag(Group, Db) ->
-    view_group_etag(Group, Db, nil).
+view_etag(Db, Group, View, QueryArgs) ->
+    view_etag(Db, Group, View, QueryArgs, nil).
 
-view_group_etag(#group{sig=Sig,current_seq=CurrentSeq}, _Db, Extra) ->
-    % ?LOG_ERROR("Group ~p",[Group]),
-    % This is not as granular as it could be.
-    % If there are updates to the db that do not effect the view index,
-    % they will change the Etag. For more granular Etags we'd need to keep
-    % track of the last Db seq that caused an index change.
-    couch_httpd:make_etag({Sig, CurrentSeq, Extra}).
+view_etag(Db, Group, {reduce, _, _, View}, QueryArgs, Extra) ->
+    view_etag(Db, Group, View, QueryArgs, Extra);
+view_etag(Db, Group, {temp_reduce, View}, QueryArgs, Extra) ->
+    view_etag(Db, Group, View, QueryArgs, Extra);
+view_etag(_Db, #group{sig=Sig, current_seq=CurrentSeq}, _View, #view_query_args{include_docs=true}, Extra) ->
+    couch_httpd:make_etag({Sig, CurrentSeq, Extra});
+view_etag(_Db, #group{sig=Sig}, #view{update_seq=UpdateSeq, purge_seq=PurgeSeq}, _QueryArgs, Extra) ->
+    couch_httpd:make_etag({Sig, UpdateSeq, PurgeSeq, Extra}).
 
 % the view row has an error
-view_row_obj(_Db, {{Key, error}, Value}, _IncludeDocs) ->
+view_row_obj(_Db, {{Key, error}, Value}, _IncludeDocs, _Conflicts) ->
     {[{key, Key}, {error, Value}]};
 % include docs in the view output
-view_row_obj(Db, {{Key, DocId}, {Props}}, true) ->
+view_row_obj(Db, {{Key, DocId}, {Props}}, true, Conflicts) ->
     Rev = case couch_util:get_value(<<"_rev">>, Props) of
     undefined ->
         nil;
@@ -655,19 +729,29 @@ view_row_obj(Db, {{Key, DocId}, {Props}}, true) ->
         couch_doc:parse_rev(Rev0)
     end,
     IncludeId = couch_util:get_value(<<"_id">>, Props, DocId),
-    view_row_with_doc(Db, {{Key, DocId}, {Props}}, {IncludeId, Rev});
-view_row_obj(Db, {{Key, DocId}, Value}, true) ->
-    view_row_with_doc(Db, {{Key, DocId}, Value}, {DocId, nil});
+    view_row_with_doc(Db, {{Key, DocId}, {Props}}, {IncludeId, Rev}, Conflicts);
+view_row_obj(Db, {{Key, DocId}, Value}, true, Conflicts) ->
+    view_row_with_doc(Db, {{Key, DocId}, Value}, {DocId, nil}, Conflicts);
 % the normal case for rendering a view row
-view_row_obj(_Db, {{Key, DocId}, Value}, _IncludeDocs) ->
+view_row_obj(_Db, {{Key, DocId}, Value}, _IncludeDocs, _Conflicts) ->
     {[{id, DocId}, {key, Key}, {value, Value}]}.
 
-view_row_with_doc(Db, {{Key, DocId}, Value}, IdRev) ->
-    {[{id, DocId}, {key, Key}, {value, Value}] ++ doc_member(Db, IdRev)}.
+view_row_with_doc(Db, {{Key, DocId}, Value}, IdRev, Conflicts) ->
+    {[{id, DocId}, {key, Key}, {value, Value}] ++
+        doc_member(Db, IdRev, if Conflicts -> [conflicts]; true -> [] end)}.
 
-doc_member(Db, {DocId, Rev}) ->
+doc_member(Db, #doc_info{id = Id, revs = [#rev_info{rev = Rev} | _]} = Info,
+        Options) ->
+    ?LOG_DEBUG("Include Doc: ~p ~p", [Id, Rev]),
+    case couch_db:open_doc(Db, Info, [deleted | Options]) of
+    {ok, Doc} ->
+        [{doc, couch_doc:to_json_obj(Doc, [])}];
+    _ ->
+        [{doc, null}]
+    end;
+doc_member(Db, {DocId, Rev}, Options) ->
     ?LOG_DEBUG("Include Doc: ~p ~p", [DocId, Rev]),
-    case (catch couch_httpd_db:couch_doc_open(Db, DocId, Rev, [])) of
+    case (catch couch_httpd_db:couch_doc_open(Db, DocId, Rev, Options)) of
     #doc{} = Doc ->
         JsonDoc = couch_doc:to_json_obj(Doc, []),
         [{doc, JsonDoc}];
@@ -716,7 +800,7 @@ finish_reduce_fold(Req, Resp, Fields, Pid) ->
         send_chunk(Resp, "{\"group_numrows\":\"" ++ integer_to_list(X) ++ "\"}"),
         end_json_response(Resp)
     end.
- 
+
 finish_reduce_fold(Req, Resp, Fields) ->
     case Resp of
     undefined ->
