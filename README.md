@@ -46,18 +46,19 @@ The "group\_numrows=true" query returns only the number of unique keys.
 For instance, there are almost 100K result lines (almost 3MB json string) in my linux box.
 The group\_numrows=true operation is 8.5 times faster than calculating the length of a hash object.
 
-The "group_numrows" query option for CouchDB 1.0.2
---------------------------------------------------
-Please refer the explanation for CouchDB 1.0.1.
+Tested Platforms
+----------------
+This release tested on following systems.
 
-The "group_numrows" query option for CouchDB 1.0.1
---------------------------------------------------
+* CouchDB 1.0.1 with Ubuntu 10.04 LTS x86_64, Debian 5 and 6 (i386, x86_64)
+* CouchDB 1.0.2 with Ubuntu 10.04 LTS x86_64, Debian 5 and 6 (i386, x86_64)
+* CouchDB 1.2.0 with Ubuntu 12.04 LTS x86_64, Debian 5 and 6 (i386, x86_64)
 
 Installation
 ------------
 To recompile beam files are recommended from the source.
 
-    $ cd apache-couchdb-1.0.1/src/couchdb/
+    $ cd apache-couchdb-1.2.0/src/couchdb/
     $ mv couch_db.hrl couch_db.hrl.orig
     $ mv couch_httpd_view.erl couch_httpd_view.erl.orig
     $ curl -o couch_db.hrl https://github.com/YasuhiroABE/CouchDB-Group_NumRows/raw/master/couch_db.hrl
@@ -65,12 +66,14 @@ To recompile beam files are recommended from the source.
     $ make
     $ make install
 
-Otherwise, replace the *.beam* with the *.erl* as an instant way.
+## Another way
+Otherwise, replacing *.beam* files with *.erl* files is a simple way on existing system.
 
-    $ rm /usr/local/lib/couchdb/erlang/lib/couch-1.0.1/ebin/couch_db.hrl
-    $ cp couch_db.hrl /usr/local/lib/couchdb/erlang/lib/couch-1.0.1/ebin/
-    $ rm /usr/local/lib/couchdb/erlang/lib/couch-1.0.1/ebin/couch_httpd_view.erl
-    $ cp couch_httpd_view.erl /usr/local/lib/couchdb/erlang/lib/couch-1.0.1/ebin/
+    $ rm /usr/local/lib/couchdb/erlang/lib/couch-1.2.0/ebin/couch_db.beam
+    $ cp couch_db.hrl /usr/local/lib/couchdb/erlang/lib/couch-1.2.0/ebin/
+	$ cp couch_db.hrl /usr/local/lib/couchdb/erlang/lib/couch-1.2.0/include/
+    $ rm /usr/local/lib/couchdb/erlang/lib/couch-1.2.0/ebin/couch_httpd_view.beam
+    $ cp couch_httpd_view.erl /usr/local/lib/couchdb/erlang/lib/couch-1.2.0/ebin/
 
 Examples
 --------
@@ -115,7 +118,7 @@ The original code is licensed under the Apache License, Version 2.0.
 
 The partial code of the couch\_db.hrl and couch\_httpd\_view.erl are also licensed under the Apache License, Version 2.0.
 
-    Copyright (C) 2010,2011 Yasuhiro ABE <yasu@yasundial.org>
+    Copyright (C) 2010-2012 Yasuhiro ABE <yasu@yasundial.org>
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
