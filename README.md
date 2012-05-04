@@ -61,8 +61,8 @@ To recompile beam files are recommended from the source.
     $ cd apache-couchdb-1.2.0/src/couchdb/
     $ mv couch_db.hrl couch_db.hrl.orig
     $ mv couch_httpd_view.erl couch_httpd_view.erl.orig
-    $ curl -o couch_db.hrl https://github.com/YasuhiroABE/CouchDB-Group_NumRows/raw/master/couch_db.hrl
-    $ curl -o couch_httpd_view.erl https://github.com/YasuhiroABE/CouchDB-Group_NumRows/raw/master/couch_httpd_view.erl
+    $ curl -o couch_db.hrl https://raw.github.com/YasuhiroABE/CouchDB-Group_NumRows/master/couch_db.hrl
+    $ curl -o couch_httpd_view.erl https://raw.github.com/YasuhiroABE/CouchDB-Group_NumRows/master/couch_httpd_view.erl
     $ make
     $ make install
 
